@@ -1,0 +1,7 @@
+__pycache__/
+.env
+.venv
+pgdata/
+qdrant_data/
+local_storage/
+*.log

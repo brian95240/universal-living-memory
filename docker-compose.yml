@@ -1,0 +1,30 @@
+version: '3.8'
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: universal_memory
+      POSTGRES_USER: universal
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vertex_secret}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    deploy: {resources: {limits: {memory: ${DB_MEM_LIMIT}}}}
+    restart: unless-stopped
+  qdrant:
+    image: qdrant/qdrant:latest
+    volumes: [qdrant_data:/qdrant/storage]
+    deploy: {resources: {limits: {memory: ${DB_MEM_LIMIT}}}}
+    restart: unless-stopped
+  orchestrator:
+    build: ./orchestrator
+    volumes:
+      - ./orchestrator:/app
+      - ./config:/app/config
+      - ${EXTERNAL_STORAGE_PATH}:/mnt/storage
+    ports: ["8000:8000"]
+    environment:
+      - AI_WORKER_THREADS=${AI_WORKER_THREADS}
+    depends_on: [postgres, qdrant]
+    restart: unless-stopped
+volumes:
+  pgdata:
+  qdrant_data:

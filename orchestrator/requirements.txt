@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+httpx[http2]
+pydantic
+python-dotenv
+psutil
+qdrant-client
+fastembed-gpu
