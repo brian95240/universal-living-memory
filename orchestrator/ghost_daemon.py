@@ -20,6 +20,7 @@ from model import ModelBank
 from vision import OcrEye
 from voice import SynthEar, VoiceBox
 from lifecycle import LifecycleMonitor
+from context_camera import get_context_camera, process_camera_command
 
 logger = logging.getLogger(__name__)
 
@@ -128,20 +129,28 @@ def on_command(cmd: str):
     try:
         cmd_lower = cmd.lower()
         
-        # OCR/Translation commands
-        if any(kw in cmd_lower for kw in ['ocr', 'translate', 'read', 'scan']):
-            if camera is None:
-                camera = OcrEye(backoff=3)  # 3 sec burst, then die
+        # Camera commands (context-aware)
+        context_camera = get_context_camera()
+        if context_camera.detect_camera_intent(cmd):
+            result = process_camera_command(cmd)
             
-            text = camera.snap()
-            
-            if model_bank and text:
-                # Use model to translate or process
-                import asyncio
-                answer = asyncio.run(model_bank.ask(f'translate or summarize: {text}'))
-                
+            if result.get('success'):
+                # Announce result
                 if voice:
-                    voice.say(answer)
+                    use_case = result.get('use_case', 'unknown')
+                    model_name = result.get('model', 'unknown').split('/')[-1]
+                    voice.say(f"{use_case} complete using {model_name}")
+                
+                # Process with model if needed
+                if model_bank and result.get('ocr_text'):
+                    import asyncio
+                    answer = asyncio.run(model_bank.ask(f"Process this {result['use_case']}: {result['ocr_text']}"))
+                    
+                    if voice:
+                        voice.say(answer)
+            else:
+                if voice:
+                    voice.say(f"Camera error: {result.get('error', 'unknown')}")
             
             # Touch lifecycle
             if lifecycle:

@@ -12,12 +12,14 @@ from vault_manager import vault_manager
 from ghost_daemon import init_ghost_daemon, activate_ghost_mode, deactivate_ghost_mode, get_ghost_status, start_daemon
 from seat_router import init_seat_router, get_router
 from model_discovery import get_discovery
+from cost_optimizer import get_optimizer
+from context_camera import get_context_camera, process_camera_command
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("VertexOrchestrator")
 
-app = FastAPI(title="Vertex Orchestrator v1.2.0", version="1.2.0")
+app = FastAPI(title="Vertex Orchestrator v1.3.0", version="1.3.0")
 manager = VertexProviderManager()
 memory = VertexMemoryEngine()
 cloud_delta = CloudDeltaEngine()
@@ -694,4 +696,140 @@ async def discovery_cache():
         return cache
     except Exception as e:
         logger.error(f"Cache load error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+# ========== COST OPTIMIZER ENDPOINTS ==========
+
+@app.get("/v1/cost/statistics")
+async def cost_statistics():
+    """Get cost optimization statistics"""
+    lifecycle.touch()
+    try:
+        optimizer = get_optimizer()
+        stats = optimizer.get_statistics()
+        return stats
+    except Exception as e:
+        logger.error(f"Cost statistics error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+@app.get("/v1/cost/suggestions")
+async def cost_suggestions():
+    """Get cost optimization suggestions"""
+    lifecycle.touch()
+    try:
+        optimizer = get_optimizer()
+        suggestions = optimizer.suggest_optimizations()
+        return {"suggestions": suggestions, "count": len(suggestions)}
+    except Exception as e:
+        logger.error(f"Cost suggestions error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+@app.post("/v1/cost/reset")
+async def cost_reset():
+    """Reset cost statistics"""
+    lifecycle.touch()
+    try:
+        optimizer = get_optimizer()
+        optimizer.reset_statistics()
+        return {"status": "reset", "message": "Cost statistics reset successfully"}
+    except Exception as e:
+        logger.error(f"Cost reset error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+# ========== CONTEXT CAMERA ENDPOINTS ==========
+
+@app.post("/v1/camera/process")
+async def camera_process(voice_input: str):
+    """Process camera command from voice input"""
+    lifecycle.touch()
+    try:
+        result = process_camera_command(voice_input)
+        return result
+    except Exception as e:
+        logger.error(f"Camera process error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+@app.get("/v1/camera/status")
+async def camera_status():
+    """Get camera status"""
+    lifecycle.touch()
+    try:
+        camera = get_context_camera()
+        status = camera.get_status()
+        return status
+    except Exception as e:
+        logger.error(f"Camera status error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+@app.post("/v1/camera/deactivate")
+async def camera_deactivate():
+    """Deactivate camera"""
+    lifecycle.touch()
+    try:
+        camera = get_context_camera()
+        camera.deactivate_camera()
+        return {"status": "deactivated", "message": "Camera deactivated successfully"}
+    except Exception as e:
+        logger.error(f"Camera deactivate error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+# ========== VAULT-CONNECTION INTEGRATION ==========
+
+@app.post("/v1/connections/{conn_id}/store-credentials")
+async def store_connection_credentials(conn_id: str, vault_entry_name: str):
+    """Store connection credentials in Vaultwarden"""
+    lifecycle.touch()
+    try:
+        # Get connection from library
+        conn = connection_lib.get_connection(conn_id)
+        if not conn:
+            raise HTTPException(404, detail="Connection not found")
+        
+        # Store in vault
+        vault_result = vault_manager.create_cipher(
+            name=vault_entry_name,
+            username=conn_id,
+            password=conn.get('api_key_value', ''),
+            notes=f"Auto-stored from connection library: {conn.get('name', conn_id)}"
+        )
+        
+        return {
+            "status": "stored",
+            "connection_id": conn_id,
+            "vault_entry": vault_entry_name,
+            "vault_result": vault_result
+        }
+    except Exception as e:
+        logger.error(f"Store credentials error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+@app.post("/v1/connections/auto-store-all")
+async def auto_store_all_credentials():
+    """Auto-store all connection credentials in Vaultwarden"""
+    lifecycle.touch()
+    try:
+        connections = connection_lib.list_connections()
+        stored = []
+        
+        for conn in connections:
+            conn_id = conn.get('conn_id')
+            if conn.get('api_key_value'):
+                try:
+                    vault_result = vault_manager.create_cipher(
+                        name=f"vertex_{conn_id}",
+                        username=conn_id,
+                        password=conn['api_key_value'],
+                        notes=f"Auto-stored: {conn.get('name', conn_id)}"
+                    )
+                    stored.append(conn_id)
+                except Exception as e:
+                    logger.warning(f"Failed to store {conn_id}: {e}")
+        
+        return {
+            "status": "completed",
+            "stored_count": len(stored),
+            "stored_connections": stored
+        }
+    except Exception as e:
+        logger.error(f"Auto-store error: {e}")
         raise HTTPException(500, detail=str(e))

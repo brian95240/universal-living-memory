@@ -19,6 +19,7 @@ from sentence_transformers import SentenceTransformer
 # Local imports
 from model import LocalModel
 from lifecycle import LifecycleMonitor
+from hf_indexer import get_indexer
 
 logger = logging.getLogger(__name__)
 
@@ -83,23 +84,20 @@ class Router:
         logger.info("🪑 Router instance created")
     
     def _delta_pull(self):
-        """Periodic model discovery and indexing."""
+        """Periodic model discovery and indexing using HuggingFace."""
         while True:
             try:
-                # Import here to avoid circular dependency
-                from model_discovery import ModelDiscovery
+                # Use HuggingFace indexer for real-time discovery
+                indexer = get_indexer()
                 
-                discovery = ModelDiscovery()
-                models = discovery.discover_models()
-                
-                # Index discovered models
-                self._reindex(models)
+                # Bulk index popular models (once per cycle)
+                indexer.bulk_index_popular_models(limit=50)
                 
                 # Touch lifecycle
                 if lifecycle:
                     lifecycle.touch()
                 
-                logger.info(f"🔄 Delta pull complete: {len(models)} models indexed")
+                logger.info(f"🔄 Delta pull complete: HuggingFace index updated")
             except Exception as e:
                 logger.error(f"❌ Delta pull error: {e}")
             
@@ -173,6 +171,7 @@ class Router:
     def assign(self, seat_id: int, input_text: str) -> Dict[str, Any]:
         """
         Assign optimal model to seat based on input text.
+        Uses HuggingFace indexer with real-time model addition.
         
         Args:
             seat_id: Seat index (0-4)
@@ -185,29 +184,31 @@ class Router:
             raise ValueError(f"Invalid seat_id: {seat_id}. Must be 0-4.")
         
         try:
-            # Embed input text
-            task_vec = self._embed(input_text)
+            # Use HuggingFace indexer for optimal model selection
+            indexer = get_indexer()
             
-            # Vector search using cosine similarity
-            with self.lock:
-                self.cur.execute("SELECT id, embedding, description, score FROM models")
-                rows = self.cur.fetchall()
+            # Get optimal model with $0-cost priority
+            optimal = indexer.get_optimal_model(
+                task_description=input_text,
+                prefer_local=True,
+                max_cost=0.0,  # $0-cost priority
+                max_params=7000  # Max 7B params for efficiency
+            )
             
-            if not rows:
-                raise RuntimeError("No models indexed. Run delta scan first.")
+            if not optimal:
+                raise RuntimeError("No suitable model found. Try indexing more models.")
             
-            # Calculate similarities
-            similarities = []
-            for row in rows:
-                model_id, model_vec, desc, score = row
-                sim = self._cosine_similarity(task_vec, model_vec)
-                similarities.append((model_id, sim, desc, score))
+            best_id = optimal['model_id']
+            best_desc = optimal['description']
+            best_sim = optimal['similarity']
             
-            # Sort by similarity
-            similarities.sort(key=lambda x: x[1], reverse=True)
-            
-            # Get best match
-            best_id, best_sim, best_desc, best_score = similarities[0]
+            # Get alternatives
+            alternatives = indexer.search_models(
+                query=input_text,
+                max_cost=0.0,
+                max_params=7000,
+                limit=4
+            )[1:4]  # Skip first (already selected)
             
             # Assign to seat (lazy load)
             if SEATS[seat_id] is None or SEATS[seat_id].id != best_id:
@@ -225,10 +226,16 @@ class Router:
                 "model": best_id,
                 "description": best_desc,
                 "context_match": round(best_sim, 3),
-                "score": best_score,
+                "cost_per_1k_tokens": optimal['cost_per_1k_tokens'],
+                "params_millions": optimal['params_millions'],
+                "is_local": optimal['is_local'],
                 "alternatives": [
-                    {"model": m[0], "similarity": round(m[1], 3)}
-                    for m in similarities[1:4]  # Top 3 alternatives
+                    {
+                        "model": m['model_id'],
+                        "similarity": round(m['similarity'], 3),
+                        "params_millions": m['params_millions']
+                    }
+                    for m in alternatives
                 ]
             }
         except Exception as e:
