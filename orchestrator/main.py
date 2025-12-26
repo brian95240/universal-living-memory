@@ -8,12 +8,13 @@ from cloud_delta import CloudDeltaEngine
 from lifecycle import LifecycleMonitor
 from connection_library import ConnectionLibrary, ConnectionType
 from universal_adapter import UniversalAdapter
+from vault_manager import vault_manager
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("VertexOrchestrator")
 
-app = FastAPI(title="Vertex Orchestrator v1.1.0", version="1.1.0")
+app = FastAPI(title="Vertex Orchestrator v1.1.1", version="1.1.1")
 manager = VertexProviderManager()
 memory = VertexMemoryEngine()
 cloud_delta = CloudDeltaEngine()
@@ -333,7 +334,7 @@ def health():
     lifecycle.touch()
     return {
         "status": "online",
-        "version": "1.1.0",
+        "version": "1.1.1",
         "active_providers": list(manager.clients.keys()),
         "available_providers": manager.list_providers(),
         "connection_stats": connection_lib.get_stats(),
@@ -347,7 +348,7 @@ def root():
     lifecycle.touch()
     return {
         "name": "Vertex Orchestrator",
-        "version": "1.1.0",
+        "version": "1.1.1",
         "tagline": "Universal AI Connection Framework",
         "features": [
             "Runtime Provider Registration",
@@ -365,3 +366,175 @@ def root():
             "mcp_servers": len(connection_lib.list_mcp_servers())
         }
     }
+
+
+# ===== VAULTWARDEN INTEGRATION (v1.1.1) =====
+
+class VaultAuthRequest(BaseModel):
+    email: str
+    master_password: str
+
+class VaultCipherRequest(BaseModel):
+    name: str
+    username: Optional[str] = None
+    password: Optional[str] = None
+    uri: Optional[str] = None
+    notes: Optional[str] = None
+    auto_generate_password: bool = False
+
+class VaultAPIKeyRequest(BaseModel):
+    service_name: str
+    api_key: str
+    api_url: Optional[str] = None
+    notes: Optional[str] = None
+
+class VaultDatabaseRequest(BaseModel):
+    db_name: str
+    db_host: str
+    db_user: str
+    db_password: Optional[str] = None
+    db_port: int = 5432
+
+@app.post("/v1/vault/auth")
+async def vault_authenticate(req: VaultAuthRequest):
+    """Authenticate with Vaultwarden"""
+    lifecycle.touch()
+    try:
+        success = await vault_manager.authenticate(req.email, req.master_password)
+        if success:
+            return {"status": "authenticated", "message": "Successfully authenticated with Vaultwarden"}
+        else:
+            raise HTTPException(401, detail="Authentication failed")
+    except Exception as e:
+        logger.error(f"Vault auth error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+@app.post("/v1/vault/cipher")
+async def vault_create_cipher(req: VaultCipherRequest):
+    """Create a new cipher in Vaultwarden"""
+    lifecycle.touch()
+    try:
+        result = await vault_manager.create_cipher(
+            name=req.name,
+            username=req.username,
+            password=req.password,
+            uri=req.uri,
+            notes=req.notes,
+            auto_generate_password=req.auto_generate_password
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Cipher creation error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+@app.get("/v1/vault/ciphers")
+async def vault_list_ciphers():
+    """List all ciphers"""
+    lifecycle.touch()
+    try:
+        ciphers = await vault_manager.list_ciphers()
+        return {"ciphers": ciphers, "count": len(ciphers)}
+    except Exception as e:
+        logger.error(f"Cipher list error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+@app.get("/v1/vault/cipher/{cipher_id}")
+async def vault_get_cipher(cipher_id: str):
+    """Get a specific cipher by ID"""
+    lifecycle.touch()
+    try:
+        cipher = await vault_manager.get_cipher(cipher_id)
+        if cipher:
+            return cipher
+        else:
+            raise HTTPException(404, detail="Cipher not found")
+    except Exception as e:
+        logger.error(f"Cipher retrieval error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+@app.delete("/v1/vault/cipher/{cipher_id}")
+async def vault_delete_cipher(cipher_id: str):
+    """Delete a cipher by ID"""
+    lifecycle.touch()
+    try:
+        success = await vault_manager.delete_cipher(cipher_id)
+        if success:
+            return {"status": "deleted", "cipher_id": cipher_id}
+        else:
+            raise HTTPException(500, detail="Deletion failed")
+    except Exception as e:
+        logger.error(f"Cipher deletion error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+@app.get("/v1/vault/search")
+async def vault_search_ciphers(q: str):
+    """Search ciphers by name or username"""
+    lifecycle.touch()
+    try:
+        results = await vault_manager.search_ciphers(q)
+        return {"results": results, "count": len(results)}
+    except Exception as e:
+        logger.error(f"Cipher search error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+@app.post("/v1/vault/api-key")
+async def vault_create_api_key(req: VaultAPIKeyRequest):
+    """Create a cipher for API key storage"""
+    lifecycle.touch()
+    try:
+        result = await vault_manager.create_api_key_cipher(
+            service_name=req.service_name,
+            api_key=req.api_key,
+            api_url=req.api_url,
+            notes=req.notes
+        )
+        return result
+    except Exception as e:
+        logger.error(f"API key cipher creation error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+@app.post("/v1/vault/database")
+async def vault_create_database(req: VaultDatabaseRequest):
+    """Create a cipher for database credentials with auto-generated password"""
+    lifecycle.touch()
+    try:
+        result = await vault_manager.create_database_cipher(
+            db_name=req.db_name,
+            db_host=req.db_host,
+            db_user=req.db_user,
+            db_password=req.db_password,
+            db_port=req.db_port
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Database cipher creation error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+@app.post("/v1/vault/generate-password")
+async def vault_generate_password(length: int = 32, include_symbols: bool = True):
+    """Generate a secure random password"""
+    lifecycle.touch()
+    try:
+        password = vault_manager.generate_password(length, include_symbols)
+        return {"password": password, "length": len(password)}
+    except Exception as e:
+        logger.error(f"Password generation error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+@app.post("/v1/vault/generate-2fa")
+async def vault_generate_2fa(account_name: str, issuer: str = "Vertex Genesis"):
+    """Generate a 2FA secret and TOTP URI"""
+    lifecycle.touch()
+    try:
+        secret = vault_manager.generate_2fa_secret()
+        uri = vault_manager.generate_totp_uri(secret, account_name, issuer)
+        return {
+            "secret": secret,
+            "uri": uri,
+            "account_name": account_name,
+            "issuer": issuer,
+            "instructions": "Scan the QR code generated from the URI in your authenticator app"
+        }
+    except Exception as e:
+        logger.error(f"2FA generation error: {e}")
+        raise HTTPException(500, detail=str(e))

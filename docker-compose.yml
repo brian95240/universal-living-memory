@@ -1,30 +1,103 @@
 version: '3.8'
+
 services:
   postgres:
     image: postgres:16-alpine
+    container_name: vertex-postgres
     environment:
       POSTGRES_DB: universal_memory
       POSTGRES_USER: universal
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vertex_secret}
-    volumes: [pgdata:/var/lib/postgresql/data]
-    deploy: {resources: {limits: {memory: ${DB_MEM_LIMIT}}}}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    deploy:
+      resources:
+        limits:
+          memory: ${DB_MEM_LIMIT}
     restart: unless-stopped
+    networks:
+      - vertex-network
+
   qdrant:
-    image: qdrant/qdrant:latest
-    volumes: [qdrant_data:/qdrant/storage]
-    deploy: {resources: {limits: {memory: ${DB_MEM_LIMIT}}}}
+    image: qdrant/qdrant:v1.7.4
+    container_name: vertex-qdrant
+    volumes:
+      - qdrant_data:/qdrant/storage
+    ports:
+      - "6333:6333"
+    deploy:
+      resources:
+        limits:
+          memory: ${DB_MEM_LIMIT}
     restart: unless-stopped
+    networks:
+      - vertex-network
+
   orchestrator:
     build: ./orchestrator
+    container_name: vertex-orchestrator
     volumes:
       - ./orchestrator:/app
       - ./config:/app/config
       - ${EXTERNAL_STORAGE_PATH}:/mnt/storage
-    ports: ["8000:8000"]
+    ports:
+      - "8000:8000"
     environment:
       - AI_WORKER_THREADS=${AI_WORKER_THREADS}
-    depends_on: [postgres, qdrant]
+      - GROK_API_KEY=${GROK_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - VAULTWARDEN_URL=http://vaultwarden:80
+      - VAULTWARDEN_ADMIN_TOKEN=${VAULT_ADMIN_TOKEN}
+      - DISABLE_LIFECYCLE=${DISABLE_LIFECYCLE:-false}
+    depends_on:
+      - postgres
+      - qdrant
+      - vaultwarden
     restart: unless-stopped
+    networks:
+      - vertex-network
+
+  vaultwarden:
+    image: vaultwarden/server:latest
+    container_name: vertex-vault
+    environment:
+      - SIGNUPS_ALLOWED=false
+      - ADMIN_TOKEN=${VAULT_ADMIN_TOKEN}
+      - DOMAIN=http://localhost:8081
+      - WEBSOCKET_ENABLED=true
+    volumes:
+      - vault_data:/data
+    ports:
+      - "8081:80"
+    restart: unless-stopped
+    networks:
+      - vertex-network
+
+  twofauth:
+    image: 2fauth/2fauth:latest
+    container_name: vertex-2fa
+    environment:
+      - APP_NAME=Vertex_2FA
+      - APP_KEY=${TWOFAUTH_APP_KEY}
+      - DB_CONNECTION=sqlite
+      - AUTHENTICATION_GUARD=web-guard
+      - WEBAUTHN_NAME=Vertex Genesis
+    volumes:
+      - 2fauth_data:/2fauth
+    ports:
+      - "5000:8000"
+    restart: unless-stopped
+    networks:
+      - vertex-network
+
+networks:
+  vertex-network:
+    driver: bridge
+
 volumes:
   pgdata:
   qdrant_data:
+  vault_data:
+  2fauth_data:
