@@ -6,3 +6,11 @@ python-dotenv
 psutil
 qdrant-client
 fastembed-gpu
+torch
+sentence-transformers
+faster-whisper
+opencv-python
+pytesseract
+pyttsx3
+pyaudio
+numpy

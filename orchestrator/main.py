@@ -9,18 +9,32 @@ from lifecycle import LifecycleMonitor
 from connection_library import ConnectionLibrary, ConnectionType
 from universal_adapter import UniversalAdapter
 from vault_manager import vault_manager
+from ghost_daemon import init_ghost_daemon, activate_ghost_mode, deactivate_ghost_mode, get_ghost_status, start_daemon
+from seat_router import init_seat_router, get_router
+from model_discovery import get_discovery
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("VertexOrchestrator")
 
-app = FastAPI(title="Vertex Orchestrator v1.1.1", version="1.1.1")
+app = FastAPI(title="Vertex Orchestrator v1.2.0", version="1.2.0")
 manager = VertexProviderManager()
 memory = VertexMemoryEngine()
 cloud_delta = CloudDeltaEngine()
 lifecycle = LifecycleMonitor(enabled=os.getenv("DISABLE_LIFECYCLE", "false").lower() != "true")
 connection_lib = ConnectionLibrary()
 universal_adapter = UniversalAdapter()
+
+# Initialize Ghost Mode and Seat Router
+init_ghost_daemon(lifecycle)
+init_seat_router(lifecycle)
+router = get_router()
+discovery = get_discovery()
+
+# Start Ghost Mode daemon if enabled
+if os.getenv("ENABLE_GHOST_MODE", "false").lower() == "true":
+    start_daemon()
+    logger.info("👻 Ghost Mode daemon started")
 
 # ===== MODELS =====
 
@@ -537,4 +551,147 @@ async def vault_generate_2fa(account_name: str, issuer: str = "Vertex Genesis"):
         }
     except Exception as e:
         logger.error(f"2FA generation error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+
+# ========== GHOST MODE ENDPOINTS ==========
+
+@app.post("/v1/ghost/activate")
+async def ghost_activate():
+    """Activate Ghost Mode (listening state)"""
+    lifecycle.touch()
+    try:
+        activate_ghost_mode()
+        return {"status": "activated", "message": "Ghost Mode is now listening"}
+    except Exception as e:
+        logger.error(f"Ghost activation error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+@app.post("/v1/ghost/deactivate")
+async def ghost_deactivate():
+    """Deactivate Ghost Mode"""
+    lifecycle.touch()
+    try:
+        deactivate_ghost_mode()
+        return {"status": "deactivated", "message": "Ghost Mode deactivated"}
+    except Exception as e:
+        logger.error(f"Ghost deactivation error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+@app.get("/v1/ghost/status")
+async def ghost_status():
+    """Get Ghost Mode status"""
+    lifecycle.touch()
+    try:
+        status = get_ghost_status()
+        return status
+    except Exception as e:
+        logger.error(f"Ghost status error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+# ========== SEAT ROUTER ENDPOINTS ==========
+
+class SeatAssignRequest(BaseModel):
+    seat_id: int
+    task_description: str
+
+@app.post("/v1/seats/assign")
+async def seat_assign(req: SeatAssignRequest):
+    """Assign optimal model to seat based on task"""
+    lifecycle.touch()
+    try:
+        result = router.assign(req.seat_id, req.task_description)
+        return result
+    except Exception as e:
+        logger.error(f"Seat assignment error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+@app.get("/v1/seats/status")
+async def seats_status():
+    """Get status of all seats"""
+    lifecycle.touch()
+    try:
+        status = router.get_all_seats_status()
+        return {"seats": status}
+    except Exception as e:
+        logger.error(f"Seats status error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+@app.get("/v1/seats/{seat_id}")
+async def seat_status(seat_id: int):
+    """Get status of specific seat"""
+    lifecycle.touch()
+    try:
+        status = router.get_seat_status(seat_id)
+        return status
+    except Exception as e:
+        logger.error(f"Seat status error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+@app.post("/v1/seats/{seat_id}/unload")
+async def seat_unload(seat_id: int):
+    """Unload model from seat"""
+    lifecycle.touch()
+    try:
+        router.unload_seat(seat_id)
+        return {"status": "unloaded", "seat_id": seat_id}
+    except Exception as e:
+        logger.error(f"Seat unload error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+@app.get("/v1/seats/models")
+async def seats_list_models():
+    """List all indexed models"""
+    lifecycle.touch()
+    try:
+        models = router.list_indexed_models()
+        return {"models": models, "count": len(models)}
+    except Exception as e:
+        logger.error(f"List models error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+# ========== MODEL DISCOVERY ENDPOINTS ==========
+
+@app.post("/v1/discovery/scan")
+async def discovery_scan(force: bool = False):
+    """Trigger model discovery scan"""
+    lifecycle.touch()
+    try:
+        models = discovery.discover_models(force=force)
+        return {"models": models, "count": len(models)}
+    except Exception as e:
+        logger.error(f"Discovery scan error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+@app.get("/v1/discovery/pricing")
+async def discovery_pricing():
+    """Get cloud spot pricing"""
+    lifecycle.touch()
+    try:
+        pricing = discovery.discover_pricing()
+        return {"pricing": pricing, "count": len(pricing)}
+    except Exception as e:
+        logger.error(f"Pricing discovery error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+@app.get("/v1/discovery/optimal")
+async def discovery_optimal(task_type: str = "general"):
+    """Get optimal model and pricing configuration"""
+    lifecycle.touch()
+    try:
+        config = discovery.get_optimal_config(task_type=task_type)
+        return config
+    except Exception as e:
+        logger.error(f"Optimal config error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+@app.get("/v1/discovery/cache")
+async def discovery_cache():
+    """Get cached discovery data"""
+    lifecycle.touch()
+    try:
+        cache = discovery.load_discovery_cache()
+        return cache
+    except Exception as e:
+        logger.error(f"Cache load error: {e}")
         raise HTTPException(500, detail=str(e))

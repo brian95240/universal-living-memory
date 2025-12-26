@@ -15,6 +15,10 @@ class LifecycleMonitor:
     def touch(self):
         """Mark activity to prevent idle shutdown"""
         self.last_activity = time.time()
+    
+    def pulse(self):
+        """Alias for touch() - Ghost Mode compatibility"""
+        self.touch()
 
     def get_idle_time(self):
         """Get current idle time in seconds"""
