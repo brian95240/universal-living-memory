@@ -14,12 +14,16 @@ from seat_router import init_seat_router, get_router
 from model_discovery import get_discovery
 from cost_optimizer import get_optimizer
 from context_camera import get_context_camera, process_camera_command
+from web_browser import get_browser_controller, process_browser_command
+from account_manager import get_account_manager, process_account_command
+from proactive_assistant import get_proactive_assistant, record_activity, ActivityType
+from agent_collaboration import get_collaboration_manager, AgentRole
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("VertexOrchestrator")
 
-app = FastAPI(title="Vertex Orchestrator v1.3.0", version="1.3.0")
+app = FastAPI(title="Vertex Orchestrator v1.4.0", version="1.4.0")
 manager = VertexProviderManager()
 memory = VertexMemoryEngine()
 cloud_delta = CloudDeltaEngine()
@@ -832,4 +836,282 @@ async def auto_store_all_credentials():
         }
     except Exception as e:
         logger.error(f"Auto-store error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+# ===== V1.4.0: WEB BROWSING =====
+
+@app.post("/v1/browser/command")
+async def browser_command(voice_input: str, consent_given: bool = False):
+    """Process browser command from voice input"""
+    lifecycle.touch()
+    record_activity(ActivityType.BROWSER_ACTION, {"voice_input": voice_input})
+    try:
+        result = await process_browser_command(voice_input, consent_given)
+        return result
+    except Exception as e:
+        logger.error(f"Browser command error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+@app.get("/v1/browser/history")
+async def get_browser_history():
+    """Get browsing history"""
+    lifecycle.touch()
+    try:
+        controller = get_browser_controller()
+        history = controller.get_history()
+        return {"history": history, "count": len(history)}
+    except Exception as e:
+        logger.error(f"Browser history error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+@app.post("/v1/browser/clear-history")
+async def clear_browser_history():
+    """Clear browsing history"""
+    lifecycle.touch()
+    try:
+        controller = get_browser_controller()
+        controller.clear_history()
+        return {"status": "success", "message": "Browser history cleared"}
+    except Exception as e:
+        logger.error(f"Clear history error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+# ===== V1.4.0: ACCOUNT MANAGEMENT =====
+
+@app.post("/v1/account/command")
+async def account_command(voice_input: str, consent_response: Optional[str] = None, command_id: Optional[str] = None):
+    """Process account management command from voice input"""
+    lifecycle.touch()
+    record_activity(ActivityType.ACCOUNT_ACTION, {"voice_input": voice_input})
+    try:
+        result = process_account_command(voice_input, consent_response, command_id)
+        return result
+    except Exception as e:
+        logger.error(f"Account command error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+@app.get("/v1/account/pending")
+async def get_pending_account_commands():
+    """Get pending account commands awaiting consent"""
+    lifecycle.touch()
+    try:
+        manager = get_account_manager()
+        pending = manager.get_pending_commands()
+        return {
+            "pending_count": len(pending),
+            "commands": [
+                {
+                    "command_id": cmd_id,
+                    "action": cmd.action.value,
+                    "service": cmd.service
+                }
+                for cmd_id, cmd in pending.items()
+            ]
+        }
+    except Exception as e:
+        logger.error(f"Pending commands error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+# ===== V1.4.0: PROACTIVE ASSISTANCE =====
+
+@app.get("/v1/proactive/suggestions")
+async def get_proactive_suggestions(priority_threshold: int = 3):
+    """Get proactive suggestions"""
+    lifecycle.touch()
+    try:
+        assistant = get_proactive_assistant()
+        suggestions = assistant.get_suggestions(priority_threshold)
+        return {
+            "suggestion_count": len(suggestions),
+            "suggestions": [
+                {
+                    "priority": s.priority,
+                    "category": s.category,
+                    "message": s.message,
+                    "action": s.action
+                }
+                for s in suggestions
+            ]
+        }
+    except Exception as e:
+        logger.error(f"Suggestions error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+@app.post("/v1/proactive/clear-suggestions")
+async def clear_proactive_suggestions():
+    """Clear all proactive suggestions"""
+    lifecycle.touch()
+    try:
+        assistant = get_proactive_assistant()
+        assistant.clear_suggestions()
+        return {"status": "success", "message": "Suggestions cleared"}
+    except Exception as e:
+        logger.error(f"Clear suggestions error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+@app.get("/v1/proactive/patterns")
+async def get_activity_patterns():
+    """Get activity patterns analysis"""
+    lifecycle.touch()
+    try:
+        assistant = get_proactive_assistant()
+        patterns = assistant.get_activity_patterns()
+        return patterns
+    except Exception as e:
+        logger.error(f"Patterns error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+@app.get("/v1/proactive/anomalies")
+async def detect_anomalies():
+    """Detect anomalous activity patterns"""
+    lifecycle.touch()
+    try:
+        assistant = get_proactive_assistant()
+        anomalies = assistant.detect_anomalies()
+        return {"anomaly_count": len(anomalies), "anomalies": anomalies}
+    except Exception as e:
+        logger.error(f"Anomalies error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+@app.get("/v1/proactive/status")
+async def get_proactive_status():
+    """Get proactive assistant status"""
+    lifecycle.touch()
+    try:
+        assistant = get_proactive_assistant()
+        status = assistant.get_status()
+        return status
+    except Exception as e:
+        logger.error(f"Status error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+# ===== V1.4.0: AGENT COLLABORATION =====
+
+@app.post("/v1/agents/register")
+async def register_agent(agent_id: str, role: str):
+    """Register agent in collaboration system"""
+    lifecycle.touch()
+    try:
+        manager = get_collaboration_manager(memory, router)
+        role_enum = AgentRole(role)
+        result = manager.register_agent(agent_id, role_enum)
+        return result
+    except Exception as e:
+        logger.error(f"Register agent error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+@app.post("/v1/agents/{agent_id}/assign")
+async def assign_agent_task(agent_id: str, task: str, context: Optional[Dict[str, Any]] = None):
+    """Assign task to agent"""
+    lifecycle.touch()
+    try:
+        manager = get_collaboration_manager(memory, router)
+        result = manager.assign_task(agent_id, task, context)
+        return result
+    except Exception as e:
+        logger.error(f"Assign task error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+@app.post("/v1/agents/handoff")
+async def handoff_agent_task(from_agent: str, to_agent: str, task: str, context: Optional[Dict[str, Any]] = None):
+    """Hand off task from one agent to another"""
+    lifecycle.touch()
+    try:
+        manager = get_collaboration_manager(memory, router)
+        result = manager.handoff_task(from_agent, to_agent, task, context)
+        return result
+    except Exception as e:
+        logger.error(f"Handoff error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+@app.post("/v1/agents/{agent_id}/complete")
+async def complete_agent_task(agent_id: str, result: Dict[str, Any]):
+    """Mark agent task as completed"""
+    lifecycle.touch()
+    try:
+        manager = get_collaboration_manager(memory, router)
+        completion_result = manager.complete_task(agent_id, result)
+        return completion_result
+    except Exception as e:
+        logger.error(f"Complete task error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+@app.get("/v1/agents/{agent_id}/status")
+async def get_agent_status(agent_id: str):
+    """Get agent status"""
+    lifecycle.touch()
+    try:
+        manager = get_collaboration_manager(memory, router)
+        status = manager.get_agent_status(agent_id)
+        if not status:
+            raise HTTPException(404, detail=f"Agent {agent_id} not found")
+        return status
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Agent status error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+@app.get("/v1/agents")
+async def get_all_agents():
+    """Get status of all agents"""
+    lifecycle.touch()
+    try:
+        manager = get_collaboration_manager(memory, router)
+        agents = manager.get_all_agents()
+        return {"agent_count": len(agents), "agents": agents}
+    except Exception as e:
+        logger.error(f"All agents error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+@app.get("/v1/agents/metrics")
+async def get_collaboration_metrics():
+    """Get collaboration metrics"""
+    lifecycle.touch()
+    try:
+        manager = get_collaboration_manager(memory, router)
+        metrics = manager.get_collaboration_metrics()
+        return metrics
+    except Exception as e:
+        logger.error(f"Metrics error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+@app.get("/v1/agents/handoffs")
+async def get_handoff_history():
+    """Get handoff history"""
+    lifecycle.touch()
+    try:
+        manager = get_collaboration_manager(memory, router)
+        history = manager.get_handoff_history()
+        return {"handoff_count": len(history), "handoffs": history}
+    except Exception as e:
+        logger.error(f"Handoff history error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+@app.post("/v1/agents/{agent_id}/share-context")
+async def share_agent_context(agent_id: str, context_key: str, context_value: Any):
+    """Share context across all agents"""
+    lifecycle.touch()
+    try:
+        manager = get_collaboration_manager(memory, router)
+        result = manager.share_context(agent_id, context_key, context_value)
+        return result
+    except Exception as e:
+        logger.error(f"Share context error: {e}")
+        raise HTTPException(500, detail=str(e))
+
+@app.get("/v1/agents/context/{context_key}")
+async def get_agent_context(context_key: str):
+    """Get shared context value"""
+    lifecycle.touch()
+    try:
+        manager = get_collaboration_manager(memory, router)
+        value = manager.get_shared_context(context_key)
+        if value is None:
+            raise HTTPException(404, detail=f"Context key {context_key} not found")
+        return {"context_key": context_key, "value": value}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Get context error: {e}")
         raise HTTPException(500, detail=str(e))
